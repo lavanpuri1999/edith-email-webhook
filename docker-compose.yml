@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  webhook:
+    build: .
+    container_name: gmail-webhook
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - HOST=0.0.0.0
+      - PORT=8001
+    env_file:
+      - .env
+    depends_on:
+      - rabbitmq
+    restart: unless-stopped
+    networks:
+      - edith-network
+
+  # RabbitMQ (shared with extraction service)
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: edith-rabbitmq
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+    networks:
+      - edith-network
+
+networks:
+  edith-network:
+    driver: bridge
+
+volumes:
+  rabbitmq_data:
