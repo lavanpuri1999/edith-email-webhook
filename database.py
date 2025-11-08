@@ -44,6 +44,16 @@ class OAuthToken(Base):
     gmail_history_id = Column(Text, nullable=True)  # Last processed Gmail historyId
 
 
+class Email(Base):
+    """Email model (read-only for duplicate checking)"""
+    __tablename__ = "emails"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    person_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    platform_email_id = Column(Text, nullable=False, index=True)  # Gmail message ID
+    platform_id = Column(Text, nullable=False)
+
+
 def get_db() -> Session:
     """Get database session"""
     return SessionLocal()
@@ -233,6 +243,42 @@ def update_gmail_history_id(person_id: str, platform_id: str, history_id: str) -
     except Exception as e:
         logger.error(f"Error updating historyId: {str(e)}", extra={'person_id': person_id, 'history_id': history_id}, exc_info=True)
         db.rollback()
+        return False
+        
+    finally:
+        db.close()
+
+
+def email_already_exists(person_id: str, platform_email_id: str) -> bool:
+    """
+    Check if an email already exists in the database (for deduplication)
+    
+    Args:
+        person_id: Person UUID string
+        platform_email_id: Gmail message ID
+        
+    Returns:
+        True if email exists, False otherwise
+    """
+    db = get_db()
+    
+    try:
+        import uuid as uuid_lib
+        
+        # Convert person_id to UUID
+        person_uuid = uuid_lib.UUID(person_id)
+        
+        # Check if email exists
+        existing = db.query(Email).filter(
+            Email.person_id == person_uuid,
+            Email.platform_email_id == platform_email_id
+        ).first()
+        
+        return existing is not None
+        
+    except Exception as e:
+        logger.error(f"Error checking email existence: {str(e)}", extra={'person_id': person_id, 'message_id': platform_email_id}, exc_info=True)
+        # On error, return False to allow processing (fail open)
         return False
         
     finally:

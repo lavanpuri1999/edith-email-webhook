@@ -14,7 +14,7 @@ load_dotenv()
 
 from celery_client import send_email_processing_task
 from gmail_client import GmailClient
-from database import lookup_person_and_token
+from database import lookup_person_and_token, email_already_exists
 from utils.logger import get_logger
 from config.logging_config import setup_logging
 from config.filters import message_matches_filters
@@ -181,6 +181,7 @@ async def gmail_push_webhook(request: Request):
         # Fetch and queue each message (with filtering)
         tasks_sent = 0
         filtered_count = 0
+        duplicate_count = 0
 
         for message_id in message_ids:
             # Fetch full message data
@@ -195,6 +196,12 @@ async def gmail_push_webhook(request: Request):
             if not message_matches_filters(message_data):
                 filtered_count += 1
                 logger.debug(f"Message filtered out (doesn't match filters)", extra={'request_id': request_id, 'person_id': person_id, 'message_id': message_id})
+                continue
+
+            # Check if email already exists (deduplication before queuing)
+            if email_already_exists(person_id, message_id):
+                duplicate_count += 1
+                logger.debug(f"Email already exists, skipping", extra={'request_id': request_id, 'person_id': person_id, 'message_id': message_id})
                 continue
 
             # Send to extraction service via Celery
@@ -214,7 +221,7 @@ async def gmail_push_webhook(request: Request):
         # Update stored historyId (even if some tasks failed, to prevent reprocessing)
         from database import update_gmail_history_id
         update_gmail_history_id(person_id, "gmail_platform_001", str(history_id))
-        logger.info(f"Updated stored historyId", extra={'request_id': request_id, 'person_id': person_id, 'history_id': history_id, 'messages_found': len(message_ids), 'tasks_sent': tasks_sent, 'filtered': filtered_count})
+        logger.info(f"Updated stored historyId", extra={'request_id': request_id, 'person_id': person_id, 'history_id': history_id, 'messages_found': len(message_ids), 'tasks_sent': tasks_sent, 'filtered': filtered_count, 'duplicates': duplicate_count})
 
         return {
             "status": "ok",
@@ -223,7 +230,8 @@ async def gmail_push_webhook(request: Request):
             "history_id": history_id,
             "messages_found": len(message_ids),
             "tasks_sent": tasks_sent,
-            "filtered": filtered_count
+            "filtered": filtered_count,
+            "duplicates": duplicate_count
         }
 
     except HTTPException:
